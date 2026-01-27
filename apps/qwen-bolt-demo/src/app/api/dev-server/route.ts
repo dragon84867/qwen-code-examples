@@ -150,6 +150,9 @@ async function findAvailablePort(start: number = 5173): Promise<number> {
 
 // 启动开发服务器
 async function startDevServer(sessionId: string, workspaceDir: string) {
+  // 收集所有日志
+  const logs: string[] = [];
+  
   // 如果已经有运行中的服务器，先停止
   const existing = devServers.get(sessionId);
   if (existing) {
@@ -161,7 +164,9 @@ async function startDevServer(sessionId: string, workspaceDir: string) {
   
   // 使用检测到的实际工作目录
   const actualWorkspaceDir = projectInfo.actualWorkspaceDir;
-  console.log(`[DevServer] Using workspace directory: ${actualWorkspaceDir}`);
+  const logMsg = `[DevServer] Using workspace directory: ${actualWorkspaceDir}`;
+  console.log(logMsg);
+  logs.push(logMsg);
   
   // 静态 HTML 项目不需要启动服务器
   if (projectInfo.type === 'static') {
@@ -170,15 +175,20 @@ async function startDevServer(sessionId: string, workspaceDir: string) {
       type: 'static',
       framework: projectInfo.framework,
       message: 'Static HTML project, using built-in preview',
+      logs,
     };
   }
 
   // 查找可用端口
   const port = await findAvailablePort();
+  logs.push(`[DevServer] Found available port: ${port}`);
 
   return new Promise((resolve, reject) => {
     // 先安装依赖
-    console.log(`[DevServer] Installing dependencies for session ${sessionId}...`);
+    const installMsg = `[DevServer] Installing dependencies for session ${sessionId}...`;
+    console.log(installMsg);
+    logs.push(installMsg);
+    
     const installProcess = spawn('npm', ['install'], {
       cwd: actualWorkspaceDir,
       shell: true,
@@ -187,13 +197,19 @@ async function startDevServer(sessionId: string, workspaceDir: string) {
 
     let installOutput = '';
     installProcess.stdout?.on('data', (data) => {
-      installOutput += data.toString();
-      console.log(`[DevServer Install] ${data.toString()}`);
+      const output = data.toString();
+      installOutput += output;
+      const logLine = `[DevServer Install] ${output}`;
+      console.log(logLine);
+      logs.push(logLine);
     });
 
     installProcess.stderr?.on('data', (data) => {
-      installOutput += data.toString();
-      console.error(`[DevServer Install Error] ${data.toString()}`);
+      const output = data.toString();
+      installOutput += output;
+      const logLine = `[DevServer Install Error] ${output}`;
+      console.error(logLine);
+      logs.push(logLine);
     });
 
     installProcess.on('close', async (code) => {
@@ -202,17 +218,26 @@ async function startDevServer(sessionId: string, workspaceDir: string) {
         return;
       }
 
-      console.log(`[DevServer] Starting dev server for session ${sessionId} on port ${port}...`);
-      console.log(`[DevServer] Using command: ${projectInfo.startCommand}`);
+      const startMsg = `[DevServer] Starting dev server for session ${sessionId} on port ${port}...`;
+      console.log(startMsg);
+      logs.push(startMsg);
+      
+      const cmdMsg = `[DevServer] Using command: ${projectInfo.startCommand}`;
+      console.log(cmdMsg);
+      logs.push(cmdMsg);
       
       // 为 Create React App 创建 .env 文件来指定端口
       if (projectInfo.type === 'react' && projectInfo.startCommand.includes('start')) {
         try {
           const envPath = join(actualWorkspaceDir, '.env');
           await writeFile(envPath, `PORT=${port}\nBROWSER=none\n`, 'utf-8');
-          console.log(`[DevServer] Created .env file with PORT=${port}`);
+          const envMsg = `[DevServer] Created .env file with PORT=${port}`;
+          console.log(envMsg);
+          logs.push(envMsg);
         } catch (error) {
-          console.error(`[DevServer] Failed to create .env file:`, error);
+          const errMsg = `[DevServer] Failed to create .env file: ${error}`;
+          console.error(errMsg);
+          logs.push(errMsg);
         }
       }
       
@@ -238,8 +263,11 @@ async function startDevServer(sessionId: string, workspaceDir: string) {
       let serverStarted = false;
 
       devProcess.stdout?.on('data', (data) => {
-        output += data.toString();
-        console.log(`[DevServer] ${data.toString()}`);
+        const dataStr = data.toString();
+        output += dataStr;
+        const logLine = `[DevServer] ${dataStr}`;
+        console.log(logLine);
+        logs.push(logLine);
 
         // 检测服务器是否启动成功
         if (!serverStarted && (
@@ -264,13 +292,17 @@ async function startDevServer(sessionId: string, workspaceDir: string) {
             framework: projectInfo.framework,
             url,
             message: 'Dev server started successfully',
+            logs, // 返回所有日志
           });
         }
       });
 
       devProcess.stderr?.on('data', (data) => {
-        output += data.toString();
-        console.error(`[DevServer Error] ${data.toString()}`);
+        const dataStr = data.toString();
+        output += dataStr;
+        const logLine = `[DevServer Error] ${dataStr}`;
+        console.error(logLine);
+        logs.push(logLine);
       });
 
       devProcess.on('close', (code) => {
@@ -316,10 +348,31 @@ export async function POST(request: NextRequest) {
     const workspaceDir = join(tmpdir(), 'qwen-bolt', sessionId);
     console.log('[DevServer API] Workspace directory:', workspaceDir);
 
-    const result = await startDevServer(sessionId, workspaceDir);
+    // 添加初始日志
+    const initialLogs = [
+      '[DevServer API] Received request',
+      `[DevServer API] Session ID: ${sessionId}`,
+      `[DevServer API] Workspace directory: ${workspaceDir}`,
+    ];
+
+    const result = await startDevServer(sessionId, workspaceDir) as any;
     console.log('[DevServer API] Result:', result);
 
-    return NextResponse.json(result);
+    // 合并初始日志和启动日志
+    const allLogs = [...initialLogs, ...(result.logs || [])];
+    
+    // 构建响应对象
+    const response = {
+      success: result.success,
+      port: result.port,
+      framework: result.framework,
+      url: result.url,
+      message: result.message,
+      type: result.type,
+      logs: allLogs,
+    };
+
+    return NextResponse.json(response);
   } catch (error) {
     console.error('[DevServer API] Error:', error);
     console.error('[DevServer API] Error stack:', error instanceof Error ? error.stack : 'No stack');
@@ -328,6 +381,59 @@ export async function POST(request: NextRequest) {
         success: false,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/dev-server?sessionId=xxx - 停止开发服务器
+export async function DELETE(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams;
+    const sessionId = searchParams.get('sessionId');
+
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: 'sessionId is required' },
+        { status: 400 }
+      );
+    }
+
+    const server = devServers.get(sessionId);
+
+    if (!server) {
+      return NextResponse.json({
+        success: true,
+        message: 'No dev server running for this session',
+      });
+    }
+
+    // Kill the process
+    try {
+      server.process.kill('SIGTERM');
+      devServers.delete(sessionId);
+      console.log(`[DevServer API] Stopped dev server for session ${sessionId} on port ${server.port}`);
+      
+      return NextResponse.json({
+        success: true,
+        message: `Dev server stopped (port ${server.port})`,
+      });
+    } catch (error) {
+      console.error('[DevServer API] Error stopping server:', error);
+      // Still remove from map even if kill fails
+      devServers.delete(sessionId);
+      return NextResponse.json({
+        success: true,
+        message: 'Dev server process terminated',
+      });
+    }
+  } catch (error) {
+    console.error('[DevServer API] Error:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
       },
       { status: 500 }
     );
@@ -373,41 +479,3 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// DELETE /api/dev-server - 停止开发服务器
-export async function DELETE(request: NextRequest) {
-  try {
-    const { sessionId } = await request.json();
-
-    if (!sessionId) {
-      return NextResponse.json(
-        { error: 'sessionId is required' },
-        { status: 400 }
-      );
-    }
-
-    const server = devServers.get(sessionId);
-
-    if (server) {
-      server.process.kill();
-      devServers.delete(sessionId);
-      return NextResponse.json({
-        success: true,
-        message: 'Dev server stopped',
-      });
-    }
-
-    return NextResponse.json({
-      success: false,
-      message: 'No dev server running for this session',
-    });
-  } catch (error) {
-    console.error('[DevServer API] Error:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
-  }
-}
