@@ -51,11 +51,23 @@ function WorkspaceContent() {
   const [isStartingServer, setIsStartingServer] = useState(false);
   const [serverError, setServerError] = useState<string>('');
   const [devServerLogs, setDevServerLogs] = useState<string[]>([]);
-  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
+  const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const [viewMode, setViewMode] = useState<'code' | 'preview'>('code');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasInitializedRef = useRef(false);
+
+  // Cleanup: Stop dev server when component unmounts
+  useEffect(() => {
+    return () => {
+      if (sessionId && devServer) {
+        console.log('[Workspace] Stopping dev server on unmount...');
+        fetch(`/api/dev-server?sessionId=${sessionId}`, {
+          method: 'DELETE',
+        }).catch(err => console.error('[Workspace] Error stopping dev server:', err));
+      }
+    };
+  }, [sessionId, devServer]);
 
   // Start development server
   const startDevServer = async () => {
@@ -63,9 +75,13 @@ function WorkspaceContent() {
 
     setIsStartingServer(true);
     setServerError('');
+    setDevServerLogs([]); // Clear previous logs
 
     try {
       console.log('[Workspace] Starting dev server for session:', sessionId);
+      
+      // Add initial log
+      setDevServerLogs(prev => [...prev, `[DevServer API] Starting dev server for session: ${sessionId}`]);
       
       // Set timeout
       const controller = new AbortController();
@@ -83,10 +99,16 @@ function WorkspaceContent() {
       const data = await response.json();
       console.log('[Workspace] Dev server response:', data);
 
+      // Add logs from response
+      if (data.logs && Array.isArray(data.logs)) {
+        setDevServerLogs(prev => [...prev, ...data.logs]);
+      }
+
       if (data.success) {
         if (data.type === 'static') {
           // Static HTML project, use preview API directly
           setPreviewUrl(`/api/preview?sessionId=${sessionId}&t=${Date.now()}`);
+          setDevServerLogs(prev => [...prev, '[DevServer] Static project detected, using preview API']);
         } else {
           // Dynamic project, use development server
           setDevServer({
@@ -96,18 +118,24 @@ function WorkspaceContent() {
           });
           // Set preview URL to development server address
           setPreviewUrl(`${data.url}?t=${Date.now()}`);
+          setDevServerLogs(prev => [...prev, `[DevServer] Server started successfully on port ${data.port}`]);
         }
         setServerError(''); // Clear error
       } else {
-        setServerError(data.error || 'Failed to start dev server');
+        const errorMsg = data.error || 'Failed to start dev server';
+        setServerError(errorMsg);
+        setDevServerLogs(prev => [...prev, `[DevServer Error] ${errorMsg}`]);
       }
     } catch (error: any) {
       console.error('[Workspace] Error starting dev server:', error);
+      let errorMsg = '';
       if (error.name === 'AbortError') {
-        setServerError('Server start timeout (2 minutes). The project may be too large or have dependency issues.');
+        errorMsg = 'Server start timeout (2 minutes). The project may be too large or have dependency issues.';
       } else {
-        setServerError(error instanceof Error ? error.message : 'Failed to start dev server');
+        errorMsg = error instanceof Error ? error.message : 'Failed to start dev server';
       }
+      setServerError(errorMsg);
+      setDevServerLogs(prev => [...prev, `[DevServer Error] ${errorMsg}`]);
     } finally {
       setIsStartingServer(false);
     }
@@ -488,36 +516,38 @@ function WorkspaceContent() {
           </div>
         </div>
 
-        {/* Content area */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* Code editor */}
-          {viewMode === 'code' && (
-            <div className="w-full flex overflow-hidden">
-              {Object.keys(files).length > 0 ? (
-                <CodeRenderer
-                  files={files}
-                  readOnly={true}
-                  isComplete={!isLoading}
-                  onCodeChange={handleCodeChange}
-                  activeFile={activeFile}
-                  onSelectFile={handleSelectFile}
-                  sessionId={sessionId}
-                />
-              ) : (
-                <div className="h-full w-full flex items-center justify-center bg-gray-900 text-gray-500">
-                  <div className="text-center">
-                    <Code2 className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                    <p className="text-lg font-medium">No files yet</p>
-                    <p className="text-sm mt-2">Start chatting with AI to generate your project</p>
+        {/* Content area - Split into main content and terminal */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Main content area */}
+          <div className={`flex overflow-hidden ${isTerminalOpen ? 'flex-1' : 'h-full'}`}>
+            {/* Code editor */}
+            {viewMode === 'code' && (
+              <div className="w-full flex overflow-hidden">
+                {Object.keys(files).length > 0 ? (
+                  <CodeRenderer
+                    files={files}
+                    readOnly={true}
+                    isComplete={!isLoading}
+                    onCodeChange={handleCodeChange}
+                    activeFile={activeFile}
+                    onSelectFile={handleSelectFile}
+                    sessionId={sessionId}
+                  />
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center bg-gray-900 text-gray-500">
+                    <div className="text-center">
+                      <Code2 className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                      <p className="text-lg font-medium">No files yet</p>
+                      <p className="text-sm mt-2">Start chatting with AI to generate your project</p>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
 
-          {/* Preview */}
-          {viewMode === 'preview' && (
-            <div className="w-full flex flex-col bg-gray-900">
+            {/* Preview */}
+            {viewMode === 'preview' && (
+              <div className="w-full flex flex-col bg-gray-900">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-gray-800">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-white">Preview</h2>
@@ -602,27 +632,27 @@ function WorkspaceContent() {
             </div>
           )}
         </div>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+
+          {/* Terminal Panel - Bottom section */}
+          <div className={`border-t border-gray-700 ${isTerminalOpen ? 'h-80' : 'h-auto'}`}>
+            <TerminalPanel 
+              devServerLogs={devServerLogs} 
+              sessionId={sessionId}
+              isOpen={isTerminalOpen}
+              onToggle={() => setIsTerminalOpen(!isTerminalOpen)}
+              onServerDetected={(port) => {
+                console.log('[Workspace] Server detected on port:', port);
+                const url = `http://localhost:${port}`;
+                setPreviewUrl(url);
+                setDevServer({ port, framework: 'Manual', url });
+              }}
+            />
+          </div>
         </div>
       </div>
-
-      {/* Terminal Panel - Fixed at bottom */}
-      {isTerminalOpen && (
-        <div className="fixed bottom-0 left-96 right-0 h-64 z-50">
-          <TerminalPanel devServerLogs={devServerLogs} />
-        </div>
-      )}
-
-      {/* Terminal Toggle Button - Fixed at bottom right */}
-      <button
-        onClick={() => setIsTerminalOpen(!isTerminalOpen)}
-        className="fixed bottom-4 right-4 z-50 px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-300 transition-colors flex items-center gap-2 shadow-lg"
-      >
-        <Terminal className="w-4 h-4" />
-        <span>{isTerminalOpen ? 'Hide' : 'Show'} Terminal</span>
-        {isTerminalOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-      </button>
     </div>
   );
 }
