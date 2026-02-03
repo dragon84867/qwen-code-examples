@@ -19,8 +19,9 @@ export function ContextSettings() {
     }
   }, [settings.knowledge, isOpen]);
 
-  const handleSaveKnowledge = () => {
+  const handleSaveAll = () => {
     updateKnowledge(knowledgeText);
+    setIsOpen(false);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -124,12 +125,6 @@ export function ContextSettings() {
                       className="w-full h-64 px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-gray-900 dark:text-gray-100"
                     />
                   </div>
-                  <button
-                    onClick={handleSaveKnowledge}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
-                  >
-                    Save Knowledge
-                  </button>
                 </div>
               )}
 
@@ -150,13 +145,7 @@ export function ContextSettings() {
                         <File className="w-4 h-4" />
                         Upload Files
                       </button>
-                      <button
-                        onClick={() => folderInputRef.current?.click()}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                      >
-                        <Folder className="w-4 h-4" />
-                        Upload Folder
-                      </button>
+                    
                       {settings.uploadedFiles.length > 0 && (
                         <button
                           onClick={clearAllFiles}
@@ -231,9 +220,15 @@ export function ContextSettings() {
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-end px-6 py-4 border-t border-gray-200 dark:border-gray-700 gap-2">
               <button
                 onClick={() => setIsOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAll}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
               >
                 Done
